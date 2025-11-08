@@ -669,17 +669,28 @@
             const loadingId = addLoadingMessage();
             
             try {
-                let response;
-                
+                let apiResult; // This will hold the processed result for display
+                let rawResponse; // This will hold the raw response from API functions
+
                 // Determine which API endpoint to call based on active tab
                 if (activeTab === 'generate') {
-                    response = await generateImage(prompt);
+                    rawResponse = await generateImage(prompt); // This is now a Response object
+                    const imageBlob = await rawResponse.blob();
+                    const imageUrl = URL.createObjectURL(imageBlob);
+                    apiResult = {
+                        success: true,
+                        image: imageUrl,
+                        message: 'Gambar berhasil dibuat'
+                    };
                 } else if (activeTab === 'edit' && currentImage) {
-                    response = await editImage(prompt, currentImage);
+                    rawResponse = await editImage(prompt, currentImage);
+                    apiResult = rawResponse; // editImage still returns JSON
                 } else if (activeTab === 'style' && currentImage) {
-                    response = await styleTransfer(prompt, currentImage);
+                    rawResponse = await styleTransfer(prompt, currentImage);
+                    apiResult = rawResponse; // styleTransfer still returns JSON
                 } else if (activeTab === 'analyze' && currentImage) {
-                    response = await analyzeImage(currentImage);
+                    rawResponse = await analyzeImage(currentImage);
+                    apiResult = rawResponse; // analyzeImage still returns JSON
                 } else {
                     throw new Error('Pilih gambar terlebih dahulu untuk fitur ini');
                 }
@@ -688,21 +699,21 @@
                 removeMessage(loadingId);
                 
                 // Add AI response to chat
-                if (response.success) {
-                    if (response.image) {
-                        addImageMessage(response.image, response.message || 'Gambar berhasil dibuat');
-                    } else if (response.analysis) {
-                        addAnalysisMessage(response.analysis, response.message || 'Analisis gambar berhasil');
+                if (apiResult.success) {
+                    if (apiResult.image) {
+                        addImageMessage(apiResult.image, apiResult.message || 'Gambar berhasil dibuat');
+                    } else if (apiResult.analysis) {
+                        addAnalysisMessage(apiResult.analysis, apiResult.message || 'Analisis gambar berhasil');
                     } else {
-                        addMessage(response.message || 'Permintaan berhasil diproses', 'ai');
+                        addMessage(apiResult.message || 'Permintaan berhasil diproses', 'ai');
                     }
                     
                     // Save to history if enabled
-                    if (response.image && document.getElementById('saveHistory').checked) {
-                        saveToHistory(response);
+                    if (apiResult.image && document.getElementById('saveHistory').checked) {
+                        saveToHistory(apiResult);
                     }
                 } else {
-                    addMessage(`Error: ${response.error}`, 'ai');
+                    addMessage(`Error: ${apiResult.error}`, 'ai');
                 }
             } catch (error) {
                 // Remove loading indicator
@@ -719,7 +730,7 @@
             const size = document.getElementById('imageSize').value;
             const steps = document.getElementById('imageQuality').value;
             
-            const response = await fetch(`${API_BASE_URL}/api/generate`, {
+            const apiResponse = await fetch(`${API_BASE_URL}/api/generate`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -732,7 +743,22 @@
                 })
             });
             
-            return await response.json();
+            if (apiResponse.ok) {
+                // If successful, return the Response object directly (which contains the image blob)
+                return apiResponse;
+            } else if (apiResponse.status === 429) {
+                const errorData = await apiResponse.json();
+                throw new Error(errorData.error || 'Rate limit exceeded.');
+            } else {
+                // Handle other API errors (e.g., 500 Internal Server Error with JSON body)
+                try {
+                    const errorData = await apiResponse.json();
+                    throw new Error(errorData.details || errorData.error || 'Failed to generate image.');
+                } catch (e) {
+                    // If response is not JSON, throw a generic error
+                    throw new Error(`API Error: ${apiResponse.status} ${apiResponse.statusText}`);
+                }
+            }
         }
         
         async function editImage(prompt, image) {
